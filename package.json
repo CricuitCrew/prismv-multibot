@@ -1,0 +1,13 @@
+{
+  "name": "prismv-multibot",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "pm2 start ecosystem.config.cjs",
+    "restart": "pm2 restart ecosystem.config.cjs",
+    "stop": "pm2 stop ecosystem.config.cjs",
+    "logs": "pm2 logs",
+    "status": "pm2 status"
+  },
+  "dependencies": {}
+}
