@@ -53,6 +53,7 @@ function removeRole(member, roleId) {
 
 // piccolo lock in RAM per evitare doppie esecuzioni ravvicinate
 const hwLock = new Map(); // userId -> timestamp
+const welcomeLock = new Map(); // userId -> timestamp (anti doppio msg)
 
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
   if (newMember.guild.id !== config.guildId) return;
@@ -78,6 +79,43 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
   if (hasLMU && hasConsole) ensureRole(newMember, R.LMU_CONSOLE);
   else removeRole(newMember, R.LMU_CONSOLE);
+
+  // ---- 1.5) WELCOME: quando viene aggiunto il ruolo "new user" ----
+  const NEW_USER_ROLE_ID = "1258822290385276978";
+  const GAME_SELECT_CHANNEL_ID = "1304790351042711636";
+
+  const addedNewUser =
+    !oldMember.roles.cache.has(NEW_USER_ROLE_ID) &&
+    newMember.roles.cache.has(NEW_USER_ROLE_ID);
+
+  if (addedNewUser) {
+    // anti doppio messaggio in caso di update a catena
+    const lastW = welcomeLock.get(newMember.id) || 0;
+    const nowW = Date.now();
+    if (nowW - lastW > 5000) {
+      welcomeLock.set(newMember.id, nowW);
+
+      setTimeout(async () => {
+        try {
+          const ch = newMember.guild.channels.cache.get(GAME_SELECT_CHANNEL_ID);
+          if (!ch) return;
+
+          const msg =
+`🇮🇹 Benvenuto su WeAreSimRacing!
+Sim racing PC & Console → vai su <#${GAME_SELECT_CHANNEL_ID}> per scegliere gioco e piattaforma e sbloccare i canali.
+
+🇬🇧 Welcome to WeAreSimRacing!
+Sim racing PC & Console → go to <#${GAME_SELECT_CHANNEL_ID}> to select your game & platform and unlock channels.`;
+
+          await ch.send({ content: msg });
+        } catch (e) {
+          console.error("WELCOME ERROR:", e);
+        }
+      }, 1000);
+
+      setTimeout(() => welcomeLock.delete(newMember.id), 15000);
+    }
+  }
 
   // ---- 2) Domande: SOLO se è stato aggiunto PC/PS5/XBOX in questo update ----
   const added = {
