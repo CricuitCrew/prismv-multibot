@@ -82,6 +82,7 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
   // ---- 1.5) WELCOME: quando viene aggiunto il ruolo "new user" ----
   const NEW_USER_ROLE_ID = "1258822290385276978";
+  const WELCOME_POST_CHANNEL_ID = "1258821932837634078";
   const GAME_SELECT_CHANNEL_ID = "1304790351042711636";
 
   const addedNewUser =
@@ -97,7 +98,7 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
       setTimeout(async () => {
         try {
-          const ch = newMember.guild.channels.cache.get(GAME_SELECT_CHANNEL_ID);
+          const ch = newMember.guild.channels.cache.get(WELCOME_POST_CHANNEL_ID);
           if (!ch) return;
 
           const msg =
@@ -116,6 +117,7 @@ Sim racing PC & Console → go to <#${GAME_SELECT_CHANNEL_ID}> to select your ga
       setTimeout(() => welcomeLock.delete(newMember.id), 15000);
     }
   }
+
 
   // ---- 2) Domande: SOLO se è stato aggiunto PC/PS5/XBOX in questo update ----
   const added = {
