@@ -112,7 +112,7 @@ Sim racing PC & Console → go to <#${GAME_SELECT_CHANNEL_ID}> to select your ga
         } catch (e) {
           console.error("WELCOME ERROR:", e);
         }
-      }, 1000);
+      }, 3000);
 
       setTimeout(() => welcomeLock.delete(newMember.id), 15000);
     }
