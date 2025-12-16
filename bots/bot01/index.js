@@ -48,14 +48,18 @@ function removeRole(member, roleId) {
 }
 
 /* ======================================================
-   RUOLI COMBINATI
+   RUOLI COMBINATI + TRIGGER DOMANDE SOLO SU HW ADDED
 ====================================================== */
+
+// piccolo lock in RAM per evitare doppie esecuzioni ravvicinate
+const hwLock = new Map(); // userId -> timestamp
 
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
   if (newMember.guild.id !== config.guildId) return;
 
   const R = config.roles;
 
+  // ---- 1) Ruoli derivati (sempre, perché deve correggere lo stato) ----
   const hasPC = newMember.roles.cache.has(R.PC);
   const hasConsole = hasAny(newMember, [R.PS5, R.XBOX]);
   const hasACC = newMember.roles.cache.has(R.ACC);
@@ -75,36 +79,47 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
   if (hasLMU && hasConsole) ensureRole(newMember, R.LMU_CONSOLE);
   else removeRole(newMember, R.LMU_CONSOLE);
 
-  // CHAT PRIVATA ID HARDWARE
-  const hwRoles = [R.PC, R.PS5, R.XBOX];
-  const hadHW = hasAny(oldMember, hwRoles);
-  const hasHW = hasAny(newMember, hwRoles);
+  // ---- 2) Domande: SOLO se è stato aggiunto PC/PS5/XBOX in questo update ----
+  const added = {
+    pc: !oldMember.roles.cache.has(R.PC) && newMember.roles.cache.has(R.PC),
+    ps5: !oldMember.roles.cache.has(R.PS5) && newMember.roles.cache.has(R.PS5),
+    xbox: !oldMember.roles.cache.has(R.XBOX) && newMember.roles.cache.has(R.XBOX)
+  };
 
-  if (!hadHW && hasHW) {
-    await ensurePrivateChannel(newMember);
-  }
+  if (!added.pc && !added.ps5 && !added.xbox) return;
 
-  if (hadHW && hasHW) {
-    await ensurePrivateChannel(newMember);
+  // lock anti-doppio trigger (es: update a catena)
+  const last = hwLock.get(newMember.id) || 0;
+  const now = Date.now();
+  if (now - last < 3000) return; // 3s di finestra
+  hwLock.set(newMember.id, now);
+
+  try {
+    await ensurePrivateChannelAndAsk(newMember, added);
+  } finally {
+    // non serve tenere il lock a lungo
+    setTimeout(() => hwLock.delete(newMember.id), 5000);
   }
 });
 
 /* ======================================================
-   CANALE PRIVATO ID HARDWARE
+   CANALE PRIVATO ID HARDWARE (no file locali)
 ====================================================== */
 
-async function ensurePrivateChannel(member) {
+async function ensurePrivateChannelAndAsk(member, added) {
   const guild = member.guild;
   const channelName = `id-${member.id}`;
 
+  // Cerca canale già esistente nella categoria
   let channel = guild.channels.cache.find(
     c => c.name === channelName && c.parentId === config.privateCategoryId
   );
 
+  // Crea se non esiste
   if (!channel) {
     channel = await guild.channels.create({
       name: channelName,
-      type: 0,
+      type: 0, // GuildText
       parent: config.privateCategoryId,
       permissionOverwrites: [
         {
@@ -132,29 +147,37 @@ async function ensurePrivateChannel(member) {
     });
   }
 
-  const asked = channel.topic?.replace("asked:", "").split(",").filter(Boolean) || [];
-  const roles = member.roles.cache;
+  // Topic come “memoria” per non ripetere domande
+  const topic = channel.topic || "asked:";
+  const asked = topic.replace("asked:", "").split(",").filter(Boolean);
 
-  if (roles.has(config.roles.PC) && !asked.includes("steam")) {
+  let changed = false;
+
+  if (added.pc && !asked.includes("steam")) {
     await channel.send("🔹 **Qual è il tuo ID STEAM?**");
     asked.push("steam");
+    changed = true;
   }
 
-  if (roles.has(config.roles.PS5) && !asked.includes("psn")) {
+  if (added.ps5 && !asked.includes("psn")) {
     await channel.send("🔹 **Qual è il tuo ID PlayStation?**");
     asked.push("psn");
+    changed = true;
   }
 
-  if (roles.has(config.roles.XBOX) && !asked.includes("xbox")) {
+  if (added.xbox && !asked.includes("xbox")) {
     await channel.send("🔹 **Qual è il tuo ID Xbox?**");
     asked.push("xbox");
+    changed = true;
   }
 
-  await channel.setTopic(`asked:${asked.join(",")}`);
+  if (changed) {
+    await channel.setTopic(`asked:${asked.join(",")}`).catch(() => {});
+  }
 }
 
 /* ======================================================
-   COMANDO !gara
+   COMANDO !gara (wizard)
 ====================================================== */
 
 client.on("messageCreate", async message => {
@@ -178,7 +201,7 @@ client.on("messageCreate", async message => {
     const targetChannel = message.guild.channels.cache.get(targetChannelId);
 
     if (!targetChannel) {
-      message.channel.send("❌ Canale non valido.");
+      await message.channel.send("❌ Canale non valido.");
       return;
     }
 
@@ -202,7 +225,7 @@ client.on("messageCreate", async message => {
 });
 
 /* ======================================================
-   GESTIONE REACTION ISCRIZIONI
+   REACTION: Iscritti / Annullato
 ====================================================== */
 
 async function updateEmbedList(reaction, user, removed = false) {
@@ -210,8 +233,10 @@ async function updateEmbedList(reaction, user, removed = false) {
   if (!message.embeds.length) return;
 
   const embed = EmbedBuilder.from(message.embeds[0]);
-  const iscritti = embed.data.fields[0].value === "-" ? [] : embed.data.fields[0].value.split("\n");
-  const annullato = embed.data.fields[1].value === "-" ? [] : embed.data.fields[1].value.split("\n");
+
+  const iscritti = embed.data.fields?.[0]?.value === "-" ? [] : (embed.data.fields?.[0]?.value || "").split("\n");
+  const annullato = embed.data.fields?.[1]?.value === "-" ? [] : (embed.data.fields?.[1]?.value || "").split("\n");
+
   const mention = `<@${user.id}>`;
 
   if (!removed) {
@@ -224,7 +249,9 @@ async function updateEmbedList(reaction, user, removed = false) {
     if (!annullato.includes(mention)) annullato.push(mention);
   }
 
-  embed.spliceFields(0, 2,
+  embed.spliceFields(
+    0,
+    2,
     { name: "Iscritti:", value: iscritti.length ? iscritti.join("\n") : "-", inline: false },
     { name: "Annullato:", value: annullato.length ? annullato.join("\n") : "-", inline: false }
   );
